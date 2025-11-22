@@ -105,13 +105,17 @@ users = db["users"]
 users.insert_one({"name": "Alice", "age": 30})
 
 # READ
-users.find_one({"name": "Alice"})
+user = users.find_one({"name": "Alice"})
+display(user)
 
 # UPDATE
 users.update_one({"name": "Alice"}, {"$inc": {"age": 1}})
+user = users.find_one({"name": "Alice"})
+display(user)
 
 # DELETE
-users.delete_one({"name": "Bob"})
+result = users.delete_one({"name": "Alice"})
+display(f"Deleted: {result.deleted_count}")
 ```
 
 ------------------------------------------------------------------------
@@ -119,7 +123,6 @@ users.delete_one({"name": "Bob"})
 ## 2.2 MongoDB CRUD using **Beanie ODM**
 
 ```python
-import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import Document, init_beanie
 from dotenv import load_dotenv
@@ -137,32 +140,30 @@ class User(Document):
     age: int
     active: bool = True
 
-async def main():
-    client = AsyncIOMotorClient(
-        f"mongodb://{MONGO_USER}:{MONGO_PASS}@localhost:{MONGO_PORT}/"
-    )
-    await init_beanie(database=client[MONGO_DB], document_models=[User])
+# Use await directly in Jupyter instead of asyncio.run()
+client = AsyncIOMotorClient(
+    f"mongodb://{MONGO_USER}:{MONGO_PASS}@localhost:{MONGO_PORT}/"
+)
+await init_beanie(database=client[MONGO_DB], document_models=[User])
 
-    await User.find_all().delete()
+await User.find_all().delete()
 
-    # CREATE
-    alice = await User(name="Alice", age=30).insert()
-    bob = await User(name="Bob", age=25).insert()
+# CREATE
+alice = await User(name="Alice", age=30).insert()
+bob = await User(name="Bob", age=25).insert()
 
-    # READ
-    print(await User.find_one(User.name == "Alice"))
-    print(await User.find(User.age >= 30).to_list())
+# READ
+display(await User.find_one(User.name == "Alice"))
+display(await User.find(User.age >= 30).to_list())
 
-    # UPDATE
-    alice.age = 31
-    await alice.save()
-    await User.find(User.name == "Bob").update({"$set": {"active": False}})
+# UPDATE
+alice.age = 31
+await alice.save()
+await User.find(User.name == "Bob").update({"$set": {"active": False}})
 
-    # DELETE
-    await alice.delete()
-    await User.find(User.active == False).delete()
-
-asyncio.run(main())
+# DELETE
+await alice.delete()
+await User.find(User.active == False).delete()
 ```
 
 ------------------------------------------------------------------------
@@ -192,6 +193,14 @@ conn = mysql.connector.connect(
 )
 cursor = conn.cursor()
 
+# CREATE TABLE
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users_mysql (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100),
+    age INT
+)
+""")
 # CREATE
 cursor.execute("INSERT INTO users_mysql (name, age) VALUES (%s, %s)", ("Alice", 30))
 
@@ -236,33 +245,47 @@ class User(Model):
     def __str__(self):
         return f"User(id={self.id}, name={self.name}, age={self.age})"
 
-async def main():
-    await Tortoise.init(db_url=DB_URL, modules={"models": ["__main__"]})
-    await Tortoise.generate_schemas()
+    class Meta:
+        table = "users_tortoise"
 
-    await User.all().delete()
+# Initialize Tortoise ORM
+await Tortoise.init(db_url=DB_URL, modules={"models": ["__main__"]})
+await Tortoise.generate_schemas()
 
-    # CREATE
-    alice = await User.create(name="Alice", age=30)
-    bob = await User.create(name="Bob", age=25)
+# Clear existing data
+await User.all().delete()
 
-    # READ
-    print(await User.all())
-    print(await User.filter(age__gte=26))
-    alice_db = await User.get(id=alice.id)
+# CREATE
+alice = await User.create(name="Alice", age=30)
+bob = await User.create(name="Bob", age=25)
 
-    # UPDATE
-    alice_db.age = 31
-    await alice_db.save()
-    await User.filter(name="Bob").update(age=27)
+# READ
+all_users = await User.all()
+display("All users:", [str(user) for user in all_users])
 
-    # DELETE
-    await alice_db.delete()
-    await User.filter(age__lt=27).delete()
+older_users = await User.filter(age__gte=26)
+display("Users 26+:", [str(user) for user in older_users])
 
-    print(await User.all())
+alice_db = await User.get(id=alice.id)
+display("Alice:", str(alice_db))
 
-asyncio.run(main())
+# UPDATE
+alice_db.age = 31
+await alice_db.save()
+await User.filter(name="Bob").update(age=27)
+
+updated_alice = await User.get(name="Alice")
+display("Alice after update:", str(updated_alice))
+
+# DELETE
+await alice_db.delete()
+await User.filter(age__lt=30).delete()
+
+remaining_users = await User.all()
+display("Remaining users:", [str(user) for user in remaining_users])
+
+# Close connections
+await Tortoise.close_connections()
 ```
 
 ------------------------------------------------------------------------
@@ -288,18 +311,39 @@ conn = psycopg.connect(
 )
 cur = conn.cursor()
 
+# CREATE TABLE
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users_pg (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100),
+    age INTEGER
+)
+""")
+
 # CREATE
 cur.execute("INSERT INTO users_pg (name, age) VALUES (%s, %s)", ("Alice", 30))
+cur.execute("INSERT INTO users_pg (name, age) VALUES (%s, %s)", ("Bob", 25))
 
 # READ
 cur.execute("SELECT * FROM users_pg")
-cur.fetchall()
+results = cur.fetchall()
+display("All users:", results)
 
 # UPDATE
 cur.execute("UPDATE users_pg SET age = age + 1 WHERE name=%s", ("Alice",))
 
+# READ after update
+cur.execute("SELECT * FROM users_pg WHERE name=%s", ("Alice",))
+result = cur.fetchone()
+display("Alice after update:", result)
+
 # DELETE
 cur.execute("DELETE FROM users_pg WHERE name=%s", ("Bob",))
+
+# READ remaining users
+cur.execute("SELECT * FROM users_pg")
+remaining = cur.fetchall()
+display("Remaining users:", remaining)
 
 conn.commit()
 cur.close()
@@ -334,33 +378,46 @@ class UserPG(Model):
     def __str__(self):
         return f"UserPG(id={self.id}, name={self.name}, age={self.age})"
 
-async def main():
-    await Tortoise.init(db_url=DB_URL, modules={"models": ["__main__"]})
-    await Tortoise.generate_schemas()
+    class Meta:
+        table = "users_tortoise_pg"
 
-    await UserPG.all().delete()
+# Initialize Tortoise ORM directly with await
+await Tortoise.init(db_url=DB_URL, modules={"models": ["__main__"]})
+await Tortoise.generate_schemas()
 
-    # CREATE
-    alice = await UserPG.create(name="Alice", age=30)
-    bob = await UserPG.create(name="Bob", age=25)
+await UserPG.all().delete()
 
-    # READ
-    print(await UserPG.all())
-    print(await UserPG.filter(age__gte=26))
-    alice_db = await UserPG.get(id=alice.id)
+# CREATE
+alice = await UserPG.create(name="Alice", age=30)
+bob = await UserPG.create(name="Bob", age=25)
 
-    # UPDATE
-    alice_db.age = 31
-    await alice_db.save()
-    await UserPG.filter(name="Bob").update(age=27)
+# READ
+all_users = await UserPG.all()
+display("All users:", [str(user) for user in all_users])
 
-    # DELETE
-    await alice_db.delete()
-    await UserPG.filter(age__lt=27).delete()
+older_users = await UserPG.filter(age__gte=26)
+display("Users 26+:", [str(user) for user in older_users])
 
-    print(await UserPG.all())
+alice_db = await UserPG.get(id=alice.id)
+display("Alice:", str(alice_db))
 
-asyncio.run(main())
+# UPDATE
+alice_db.age = 31
+await alice_db.save()
+await UserPG.filter(name="Bob").update(age=27)
+
+updated_alice = await UserPG.get(name="Alice")
+display("Alice after update:", str(updated_alice))
+
+# DELETE
+await alice_db.delete()
+await UserPG.filter(age__lt=30).delete()
+
+remaining_users = await UserPG.all()
+display("Remaining users:", [str(user) for user in remaining_users])
+
+# Close connections
+await Tortoise.close_connections()
 ```
 
 ------------------------------------------------------------------------
@@ -411,15 +468,7 @@ REDIS_PORT = os.getenv("REDIS_PORT")
 # Option 1: Using URL (recommended when you say "also from url")
 REDIS_URL = f"redis://:{REDIS_PASS}@localhost:{REDIS_PORT}/0"
 r = redis.Redis.from_url(REDIS_URL)
-
-# Option 2: (previous style) Using host/port/password directly
-# r = redis.Redis(
-#     host="localhost",
-#     port=REDIS_PORT,
-#     password=REDIS_PASS,
-#     db=0
-# )
-
+ 
 # CREATE
 r.hset("user:1", mapping={"name": "Alice", "age": "30"})
 
