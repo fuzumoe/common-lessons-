@@ -1,0 +1,8 @@
+=== Content from a.txt ===
+Content of file A
+Line 2 of A
+Line 3 of A
+=== Content from b.txt ===
+Content of file B
+Line 2 of B
+Line 3 of B
