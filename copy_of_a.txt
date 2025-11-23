@@ -1,0 +1,3 @@
+[COPIED] Content of file A
+[COPIED] Line 2 of A
+[COPIED] Line 3 of A
